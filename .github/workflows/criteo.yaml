@@ -1,0 +1,23 @@
+name: Release
+on:
+  release:
+    type: [published]
+jobs:
+
+  build:
+    name: Publish artifacts
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup go
+      uses: actions/setup-go@v2
+      with:
+        go-version: ${{ env.go_version }}
+    - uses: actions/checkout@v2
+    - name: Build
+      run: make --warn-undefined-variables
+    - name: Upload
+      uses: fnkr/github-action-ghr@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GHR_PATH: ./scylla-operator
+        GHR_COMPRESS: gz
