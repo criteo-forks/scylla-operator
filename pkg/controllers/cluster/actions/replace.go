@@ -9,7 +9,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/scylladb/go-log"
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
 	"github.com/scylladb/scylla-operator/pkg/controllers/cluster/util"
 	"github.com/scylladb/scylla-operator/pkg/naming"
 	corev1 "k8s.io/api/core/v1"
@@ -212,6 +212,9 @@ func (a *RackReplaceNode) replaceNode(ctx context.Context, state *State, member 
 	state.recorder.Event(c, corev1.EventTypeNormal, naming.SuccessSynced,
 		fmt.Sprintf("Rack %q removed %q Service", r.Name, member.Name),
 	)
+
+	// Give StatefulSet controller a chance to see the PVC was deleted before deleting the pod.
+	time.Sleep(10 * time.Second)
 
 	a.Logger.Info(ctx, "Deleting member Pod", "member", member.Name)
 	if err := cc.Delete(ctx, pod, client.GracePeriodSeconds(0)); err != nil {

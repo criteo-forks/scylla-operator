@@ -8,7 +8,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/scylladb/go-log"
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
 	"github.com/scylladb/scylla-operator/pkg/naming"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -67,19 +67,6 @@ func GetStatefulSetForRack(ctx context.Context, rack scyllav1.RackSpec, cluster 
 		return nil, err
 	}
 	return sts, nil
-}
-
-// RefFromString is a helper function that takes a string
-// and outputs a reference to that string.
-// Useful for initializing a string pointer from a literal.
-func RefFromString(s string) *string {
-	return &s
-}
-
-// RefFromInt32 is a helper function that takes a int32
-// and outputs a reference to that int.
-func RefFromInt32(i int32) *int32 {
-	return &i
 }
 
 // VerifyOwner checks if the owner Object is the controller

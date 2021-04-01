@@ -7,7 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/pkg/errors"
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
 	"github.com/scylladb/scylla-operator/pkg/controllers/cluster/util"
 	"github.com/scylladb/scylla-operator/pkg/naming"
 	appsv1 "k8s.io/api/apps/v1"
@@ -82,7 +82,7 @@ func (cc *ClusterReconciler) updateStatus(ctx context.Context, cluster *scyllav1
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			rackStatus.Version, err = naming.ScyllaVersion(sts.Spec.Template.Spec.Containers)
+			rackStatus.Version, err = naming.ScyllaVersion(firstRackMember.Spec.Containers)
 			if err != nil {
 				return errors.WithStack(err)
 			}

@@ -2,12 +2,12 @@ package resource
 
 import (
 	"fmt"
+	"github.com/scylladb/scylla-operator/pkg/cmd/operator/options"
 	"path"
 	"strconv"
 	"strings"
 
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
-	"github.com/scylladb/scylla-operator/pkg/cmd/scylla-operator/options"
+    scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
 	"github.com/scylladb/scylla-operator/pkg/controllers/cluster/util"
 	"github.com/scylladb/scylla-operator/pkg/naming"
 	appsv1 "k8s.io/api/apps/v1"
@@ -15,11 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-)
-
-const (
-	officialScyllaRepo             = "scylladb/scylla"
-	officialScyllaManagerAgentRepo = "scylladb/scylla-manager-agent"
+	"k8s.io/utils/pointer"
 )
 
 func HeadlessServiceForCluster(c *scyllav1.ScyllaCluster) *corev1.Service {
@@ -91,6 +87,14 @@ func memberServicePorts(cluster *scyllav1.ScyllaCluster) []corev1.ServicePort {
 			Port: 7199,
 		},
 		{
+			Name: "cql",
+			Port: 9042,
+		},
+		{
+			Name: "cql-ssl",
+			Port: 9142,
+		},
+		{
 			Name: "agent-api",
 			Port: 10001,
 		},
@@ -102,12 +106,6 @@ func memberServicePorts(cluster *scyllav1.ScyllaCluster) []corev1.ServicePort {
 		})
 	} else {
 		ports = append(ports, corev1.ServicePort{
-			Name: "cql",
-			Port: 9042,
-		}, corev1.ServicePort{
-			Name: "cql-ssl",
-			Port: 9142,
-		}, corev1.ServicePort{
 			Name: "thrift",
 			Port: 9160,
 		})
@@ -130,7 +128,7 @@ func StatefulSetForRack(r scyllav1.RackSpec, c *scyllav1.ScyllaCluster, sidecarI
 			OwnerReferences: []metav1.OwnerReference{util.NewControllerRef(c)},
 		},
 		Spec: appsv1.StatefulSetSpec{
-			Replicas: util.RefFromInt32(0),
+			Replicas: pointer.Int32Ptr(0),
 			// Use a common Headless Service for all StatefulSets
 			ServiceName: naming.HeadlessServiceNameForCluster(c),
 			Selector: &metav1.LabelSelector{
@@ -286,12 +284,23 @@ func StatefulSetForRack(r scyllav1.RackSpec, c *scyllav1.ScyllaCluster, sidecarI
 									Add: []corev1.Capability{"SYS_NICE"},
 								},
 							},
-							LivenessProbe: &corev1.Probe{
+							StartupProbe: &corev1.Probe{
 								// Initial delay should be big, because scylla runs benchmarks
 								// to tune the IO settings.
-								InitialDelaySeconds: int32(400),
-								TimeoutSeconds:      int32(5),
-								PeriodSeconds:       int32(10),
+								TimeoutSeconds:   int32(5),
+								FailureThreshold: int32(40),
+								PeriodSeconds:    int32(10),
+								Handler: corev1.Handler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Port: intstr.FromInt(naming.ProbePort),
+										Path: naming.LivenessProbePath,
+									},
+								},
+							},
+							LivenessProbe: &corev1.Probe{
+								TimeoutSeconds:   int32(5),
+								FailureThreshold: int32(3),
+								PeriodSeconds:    int32(10),
 								Handler: corev1.Handler{
 									HTTPGet: &corev1.HTTPGetAction{
 										Port: intstr.FromInt(naming.ProbePort),
@@ -300,11 +309,8 @@ func StatefulSetForRack(r scyllav1.RackSpec, c *scyllav1.ScyllaCluster, sidecarI
 								},
 							},
 							ReadinessProbe: &corev1.Probe{
-								InitialDelaySeconds: int32(30),
-								TimeoutSeconds:      int32(5),
-								// TODO: Investigate if it's optimal to call status every 10 seconds
-								PeriodSeconds:    int32(10),
-								SuccessThreshold: int32(3),
+								TimeoutSeconds: int32(5),
+								PeriodSeconds:  int32(10),
 								Handler: corev1.Handler{
 									HTTPGet: &corev1.HTTPGetAction{
 										Port: intstr.FromInt(naming.ProbePort),
@@ -426,12 +432,8 @@ func sysctlInitContainer(sysctls []string) *corev1.Container {
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("1"),
-				corev1.ResourceMemory: resource.MustParse("200M"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("1"),
-				corev1.ResourceMemory: resource.MustParse("200M"),
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("10Mi"),
 			},
 		},
 		Command: []string{
@@ -481,23 +483,11 @@ func agentContainer(r scyllav1.RackSpec, c *scyllav1.ScyllaCluster) corev1.Conta
 }
 
 func ImageForCluster(c *scyllav1.ScyllaCluster) string {
-	repo := officialScyllaRepo
-	if c.Spec.Repository != nil {
-		repo = *c.Spec.Repository
-	}
-	return fmt.Sprintf("%s:%s", repo, c.Spec.Version)
+	return fmt.Sprintf("%s:%s", c.Spec.Repository, c.Spec.Version)
 }
 
 func agentImageForCluster(c *scyllav1.ScyllaCluster) string {
-	repo := officialScyllaManagerAgentRepo
-	if c.Spec.AgentRepository != nil {
-		repo = *c.Spec.AgentRepository
-	}
-	version := "latest"
-	if c.Spec.AgentVersion != nil {
-		version = *c.Spec.AgentVersion
-	}
-	return fmt.Sprintf("%s:%s", repo, version)
+	return fmt.Sprintf("%s:%s", c.Spec.AgentRepository, c.Spec.AgentVersion)
 }
 
 func stringOrDefault(str, def string) string {

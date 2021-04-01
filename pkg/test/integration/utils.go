@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
 	"github.com/scylladb/scylla-operator/pkg/naming"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -26,7 +25,7 @@ func (t *TestEnvironment) SingleRackCluster(ns *corev1.Namespace) *scyllav1.Scyl
 		},
 		Spec: scyllav1.ClusterSpec{
 			Version:       "4.2.0",
-			AgentVersion:  pointer.StringPtr("2.2.0"),
+			AgentVersion:  "2.2.0",
 			DeveloperMode: true,
 			Datacenter: scyllav1.DatacenterSpec{
 				Name: "dc1",
@@ -76,7 +75,7 @@ func (t *TestEnvironment) MultiRackCluster(ns *corev1.Namespace, members ...int3
 		},
 		Spec: scyllav1.ClusterSpec{
 			Version:       "4.2.0",
-			AgentVersion:  pointer.StringPtr("2.2.0"),
+			AgentVersion:  "2.2.0",
 			DeveloperMode: true,
 			Datacenter: scyllav1.DatacenterSpec{
 				Name:  "dc1",

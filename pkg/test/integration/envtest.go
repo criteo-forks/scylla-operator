@@ -17,16 +17,16 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/scylladb/go-log"
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
 	utilyaml "github.com/scylladb/scylla-operator/pkg/util/yaml"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -49,7 +49,7 @@ func init() {
 	env = &envtest.Environment{
 		ErrorIfCRDPathMissing: true,
 		CRDDirectoryPaths: []string{
-			filepath.Join(root, "config", "operator", "crd", "bases"),
+			filepath.Join(root, "deploy", "operator", "00_scylla.scylladb.com_scyllaclusters.yaml"),
 		},
 	}
 }
@@ -140,7 +140,7 @@ const (
 	validatingWebhookKind = "ValidatingWebhookConfiguration"
 )
 
-func appendWebhookConfiguration(mutatingWebhooks []runtime.Object, validatingWebhooks []runtime.Object, configyamlFile io.Reader, tag string) ([]runtime.Object, []runtime.Object, error) {
+func appendWebhookConfiguration(mutatingWebhooks []client.Object, validatingWebhooks []client.Object, configyamlFile io.Reader, tag string) ([]client.Object, []client.Object, error) {
 	objs, err := utilyaml.ToUnstructured(configyamlFile)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "parse yaml")
@@ -159,10 +159,10 @@ func appendWebhookConfiguration(mutatingWebhooks []runtime.Object, validatingWeb
 }
 
 func initializeWebhookInEnvironment() error {
-	var validatingWebhooks, mutatingWebhooks []runtime.Object
+	var validatingWebhooks, mutatingWebhooks []client.Object
 
 	root := rootPath()
-	configyamlFile, err := ioutil.ReadFile(filepath.Join(root, "config", "operator", "webhook", "manifests.yaml"))
+	configyamlFile, err := ioutil.ReadFile(filepath.Join(root, "deploy", "operator", "10_webhook.yaml"))
 	if err != nil {
 		return errors.Wrap(err, "read core webhook configuration file")
 	}
@@ -185,7 +185,7 @@ func initializeWebhookInEnvironment() error {
 func (t *TestEnvironment) StartManager(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	t.cancel = cancel
-	return t.Manager.Start(ctx.Done())
+	return t.Manager.Start(ctx)
 }
 
 func (t *TestEnvironment) WaitForWebhooks() {

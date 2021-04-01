@@ -14,7 +14,7 @@ import (
 	"github.com/scylladb/go-log"
 	"github.com/scylladb/go-set/strset"
 	"github.com/scylladb/gocqlx/v2"
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
 	"github.com/scylladb/scylla-operator/pkg/controllers/cluster/resource"
 	"github.com/scylladb/scylla-operator/pkg/controllers/cluster/util"
 	"github.com/scylladb/scylla-operator/pkg/naming"
@@ -145,9 +145,7 @@ func (a *ClusterVersionUpgrade) Execute(ctx context.Context, s *State) error {
 	a.pollInterval = scyllav1.DefaultGenericUpgradePollInterval
 
 	if a.Cluster.Spec.GenericUpgrade != nil {
-		if a.Cluster.Spec.GenericUpgrade.PollInterval != nil {
-			a.pollInterval = a.Cluster.Spec.GenericUpgrade.PollInterval.Duration
-		}
+		a.pollInterval = a.Cluster.Spec.GenericUpgrade.PollInterval.Duration
 	}
 
 	switch a.upgradeProcedure(ctx) {

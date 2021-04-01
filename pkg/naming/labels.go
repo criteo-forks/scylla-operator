@@ -3,7 +3,7 @@ package naming
 import (
 	"fmt"
 
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
@@ -69,12 +69,11 @@ func recommendedLabels() map[string]string {
 
 func ManagerSelector() labels.Selector {
 	return labels.SelectorFromSet(map[string]string{
-		"app": ManagerAppName,
+		"app.kubernetes.io/name": ManagerAppName,
 	})
 }
 
 func mergeLabels(l1, l2 map[string]string) map[string]string {
-
 	res := make(map[string]string)
 	for k, v := range l1 {
 		res[k] = v

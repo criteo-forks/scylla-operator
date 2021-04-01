@@ -5,10 +5,12 @@ SHELL :=/bin/bash -euEo pipefail
 IMAGE_TAG ?= latest
 IMAGE_REF ?= docker.io/scylladb/scylla-operator:$(IMAGE_TAG)
 
-# Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
-CRD_OPTIONS 	?= "crd:trivialVersions=true"
+CODEGEN_PKG ?=./vendor/k8s.io/code-generator
+CODEGEN_HEADER_FILE ?=/dev/null
+CODEGEN_APIS_PACKAGE ?=$(GO_PACKAGE)/pkg/api
+CODEGEN_GROUPS_VERSIONS ?="scyllaclusters/v1"
 
-GO_REQUIRED_MIN_VERSION ?=1.15.7
+GO_REQUIRED_MIN_VERSION ?=1.16
 
 GIT_TAG ?=$(shell git describe --long --tags --abbrev=7 --match 'v[0-9]*' || echo 'v0.0.0-unknown')
 GIT_COMMIT ?=$(shell git rev-parse --short "HEAD^{commit}" 2>/dev/null)
@@ -27,18 +29,19 @@ GO_PACKAGES ?=./...
 
 go_packages_dirs :=$(shell $(GO) list -f '{{ .Dir }}' $(GO_PACKAGES) || echo 'no_package_dir_detected')
 GO_TEST_PACKAGES ?=$(GO_PACKAGES)
-GO_BUILD_PACKAGES ?=./pkg/cmd/...
+GO_BUILD_PACKAGES ?=./cmd/...
 GO_BUILD_PACKAGES_EXPANDED ?=$(shell $(GO) list $(GO_BUILD_PACKAGES))
 go_build_binaries =$(notdir $(GO_BUILD_PACKAGES_EXPANDED))
 GO_BUILD_FLAGS ?=-trimpath
 GO_BUILD_BINDIR ?=
 GO_LD_EXTRA_FLAGS ?=
-GO_TEST_PACKAGES :=./pkg/... # ./cmd/...
+GO_TEST_PACKAGES :=./pkg/... ./cmd/...
 GO_TEST_FLAGS ?=-race
 GO_TEST_COUNT ?=
 GO_TEST_EXTRA_FLAGS ?=
 GO_TEST_ARGS ?=
 GO_TEST_EXTRA_ARGS ?=
+GO_TEST_E2E_EXTRA_ARGS ?=
 
 HELM_CHANNEL ?=latest
 HELM_CHARTS ?=scylla-operator scylla-manager scylla
@@ -49,6 +52,10 @@ HELM_CHART_VERSION_SUFFIX ?=
 HELM_CHART_VERSION ?=$(GIT_TAG)$(HELM_CHART_VERSION_SUFFIX)
 HELM_BUCKET ?=gs://scylla-operator-charts/$(HELM_CHANNEL)
 HELM_REPOSITORY ?=https://scylla-operator-charts.storage.googleapis.com/$(HELM_CHANNEL)
+HELM_MANIFEST_CACHE_CONTROL ?=public, max-age=600
+
+CONTROLLER_GEN ?=$(GO) run ./vendor/sigs.k8s.io/controller-tools/cmd/controller-gen --
+CRD_PATH ?= pkg/api/scylla/v1/scylla.scylladb.com_scyllaclusters.yaml
 
 define version-ldflags
 -X $(1).versionFromGit="$(GIT_TAG)" \
@@ -108,6 +115,20 @@ define lint-helm
 
 endef
 
+# $1 - manifest
+# $2 - output
+define append-manifest
+	echo -e '\n---' | cat '$(1)' - >> '$(2)'
+
+endef
+
+# $1 - manifest files list
+# $2 - output
+define concat-manifests
+	true > '$(2)'
+	$(foreach file,$(1),$(call append-manifest,$(file),$(2)))
+endef
+
 # We need to build each package separately so go build creates appropriate binaries
 build:
 	$(if $(strip $(GO_BUILD_PACKAGES_EXPANDED)),,$(error no packages to build: GO_BUILD_PACKAGES_EXPANDED var is empty))
@@ -119,7 +140,7 @@ clean:
 .PHONY: clean
 
 verify-govet:
-	$(GO) vet $(GO_MOD_FLAGS) $(GO_PACKAGES)
+	$(GO) vet $(GO_PACKAGES)
 .PHONY: verify-govet
 
 verify-gofmt:
@@ -138,7 +159,8 @@ update-gofmt:
 .PHONY: update-gofmt
 
 # We need to force localle so different envs sort files the same way for recursive traversals
-deps_diff :=LC_COLLATE=C diff --no-dereference -N
+diff :=LC_COLLATE=C diff --no-dereference -N
+diff_dir :=LC_COLLATE=C diff -rq -N
 
 # $1 - temporary directory
 define restore-deps
@@ -146,18 +168,18 @@ define restore-deps
 	cp -R -H ./ "$(1)"/updated
 	$(RM) -r "$(1)"/updated/vendor
 	cd "$(1)"/updated && $(GO) mod tidy && $(GO) mod vendor && $(GO) mod verify
-	cd "$(1)" && $(deps_diff) -r {current,updated}/vendor/ > updated/deps.diff || true
+	cd "$(1)" && $(diff) -r {current,updated}/vendor/ > updated/deps.diff || true
 endef
 
 verify-deps: tmp_dir:=$(shell mktemp -d)
 verify-deps:
 	$(call restore-deps,$(tmp_dir))
-	@echo $(deps_diff) "$(tmp_dir)"/{current,updated}/go.mod
-	@     $(deps_diff) "$(tmp_dir)"/{current,updated}/go.mod || ( echo '`go.mod` content is incorrect - did you run `go mod tidy`?' && false )
-	@echo $(deps_diff) "$(tmp_dir)"/{current,updated}/go.sum
-	@     $(deps_diff) "$(tmp_dir)"/{current,updated}/go.sum || ( echo '`go.sum` content is incorrect - did you run `go mod tidy`?' && false )
-	@echo $(deps_diff) '$(tmp_dir)'/{current,updated}/deps.diff
-	@     $(deps_diff) '$(tmp_dir)'/{current,updated}/deps.diff || ( \
+	@echo $(diff) "$(tmp_dir)"/{current,updated}/go.mod
+	@     $(diff) "$(tmp_dir)"/{current,updated}/go.mod || ( echo '`go.mod` content is incorrect - did you run `go mod tidy`?' && false )
+	@echo $(diff) "$(tmp_dir)"/{current,updated}/go.sum
+	@     $(diff) "$(tmp_dir)"/{current,updated}/go.sum || ( echo '`go.sum` content is incorrect - did you run `go mod tidy`?' && false )
+	@echo $(diff) '$(tmp_dir)'/{current,updated}/deps.diff
+	@     $(diff) '$(tmp_dir)'/{current,updated}/deps.diff || ( \
 		echo "ERROR: Content of 'vendor/' directory doesn't match 'go.mod' configuration and the overrides in 'deps.diff'!" && \
 		echo 'Did you run `go mod vendor`?' && \
 		echo "If this is an intentional change (a carry patch) please update the 'deps.diff' using 'make update-deps-overrides'." && \
@@ -175,10 +197,107 @@ verify-helm:
 	@$(foreach chart,$(HELM_CHARTS),$(call lint-helm,$(chart)))
 .PHONY: verify-helm
 
-verify: verify-govet verify-gofmt verify-helm
+define run-codegen
+	GOPATH=$(GOPATH) $(GO) run "$(CODEGEN_PKG)/cmd/$(1)" --go-header-file='$(CODEGEN_HEADER_FILE)' $(2)
+
+endef
+
+define run-deepcopy-gen
+	$(call run-codegen,deepcopy-gen,--input-dirs='github.com/scylladb/scylla-operator/pkg/api/scylla/v1' --output-file-base='zz_generated.deepcopy' --bounding-dirs='github.com/scylladb/scylla-operator/pkg/api/' $(1))
+
+endef
+
+define run-client-gen
+	$(call run-codegen,client-gen,--clientset-name=versioned --input-base="./" --input='github.com/scylladb/scylla-operator/pkg/api/scylla/v1' --output-package='github.com/scylladb/scylla-operator/pkg/client/scylla/clientset' $(1))
+
+endef
+
+define run-lister-gen
+	$(call run-codegen,lister-gen,--input-dirs='github.com/scylladb/scylla-operator/pkg/api/scylla/v1' --output-package='github.com/scylladb/scylla-operator/pkg/client/scylla/listers' $(1))
+
+endef
+
+define run-informer-gen
+	$(call run-codegen,informer-gen,--input-dirs='github.com/scylladb/scylla-operator/pkg/api/scylla/v1' --output-package='github.com/scylladb/scylla-operator/pkg/client/scylla/informers' --versioned-clientset-package "github.com/scylladb/scylla-operator/pkg/client/scylla/clientset/versioned" --listers-package="github.com/scylladb/scylla-operator/pkg/client/scylla/listers" $(1))
+
+endef
+
+update-codegen:
+	$(call run-deepcopy-gen,)
+	$(call run-client-gen,)
+	$(call run-lister-gen,)
+	$(call run-informer-gen,)
+.PHONY: update-codegen
+
+# $1 - target file
+define generate-crd
+	$(CONTROLLER_GEN) crd paths="$(GO_PACKAGES)" output:crd:stdout > '$(1)'
+endef
+
+update-crd:
+	$(call generate-crd,$(CRD_PATH))
+.PHONY: update-crd
+
+verify-crd: tmp_file :=$(shell mktemp)
+verify-crd:
+	$(call generate-crd,$(tmp_file))
+	$(diff) '$(tmp_file)' '$(CRD_PATH)' || (echo 'File $(CRD_PATH) is not up-to date. Please run `make update-crd` to update it.' && false)
+.PHONY: verify-crd
+
+# $1 - target dir
+define generate-dev-manifests
+	mkdir -p '$(1)' && \
+	cp deploy/manager/prod/*.yaml '$(1)' && \
+	yq eval '.spec.cpuset=false | .spec.datacenter.racks[] = (.spec.datacenter.racks[] | .resources.limits.cpu="200m" | .resources.limits.memory="200Mi" | .resources.requests.cpu="10m" | .resources.requests.memory="100Mi" )' -i '$(1)'/10_scylla_scyllacluster.yaml
+endef
+
+update-deploy-dev:
+	$(call generate-dev-manifests,deploy/manager/dev)
+.PHONY: update-deploy-dev
+
+verify-deploy-dev: tmp_dir :=$(shell mktemp -d)
+verify-deploy-dev:
+	$(call generate-dev-manifests,$(tmp_dir))
+	$(diff_dir) '$(tmp_dir)' deploy/manager/dev || ( echo 'Deploy manifests are not up-to date. Please run `make update-deploy-dev` to update them.' && false )
+.PHONY: verify-deploy-dev
+
+update-examples-operator:
+	$(call concat-manifests,$(sort $(wildcard deploy/operator/*.yaml)),examples/common/operator.yaml)
+.PHONY: update-examples-operator
+
+verify-example-operator: tmp_file := $(shell mktemp)
+verify-example-operator:
+	$(call concat-manifests,$(sort $(wildcard deploy/operator/*.yaml)),$(tmp_file))
+	$(diff) '$(tmp_file)' examples/common/operator.yaml || (echo 'Operator example is not up-to date. Please run `make update-examples-operator` to update it.' && false)
+.PHONY: verify-example-operator
+
+update-examples-manager:
+	$(call concat-manifests,$(sort $(wildcard deploy/manager/prod/*.yaml)),examples/common/manager.yaml)
+.PHONY: update-examples-manager
+
+verify-example-manager: tmp_file :=$(shell mktemp)
+verify-example-manager:
+	$(call concat-manifests,$(sort $(wildcard deploy/manager/prod/*.yaml)),$(tmp_file))
+	$(diff) '$(tmp_file)' examples/common/manager.yaml || (echo 'Manager example is not up-to date. Please run `make update-examples-manager` to update it.' && false)
+.PHONY: verify-example-manager
+
+update-examples: update-examples-manager update-examples-operator
+.PHONY: update-examples
+
+verify-examples: verify-example-manager verify-example-operator
+.PHONY: verify-examples
+
+verify-codegen:
+	$(call run-deepcopy-gen,--verify-only)
+	$(call run-client-gen,--verify-only)
+	$(call run-lister-gen,--verify-only)
+	$(call run-informer-gen,--verify-only)
+.PHONY: verify-codegen
+
+verify: verify-gofmt verify-codegen verify-crd verify-examples verify-deploy-dev verify-govet verify-helm
 .PHONY: verify
 
-update: update-gofmt
+update: update-gofmt update-codegen update-crd update-examples update-deploy-dev
 .PHONY: update
 
 test-unit:
@@ -191,6 +310,10 @@ test-integration: GO_TEST_FLAGS += -p=1 -timeout 30m -v
 test-integration: GO_TEST_ARGS += -ginkgo.progress
 test-integration: test-unit
 .PHONY: test-integration
+
+test-e2e:
+	$(GO) run ./cmd/scylla-operator-tests run $(GO_TEST_E2E_EXTRA_ARGS)
+.PHONY: test-e2e
 
 test-version-script:
 	./hack/lib/tag-from-gh-ref.sh
@@ -206,56 +329,21 @@ help:
 	awk '/^[^.%][-A-Za-z0-9_]*:/	{ print substr($$1, 1, length($$1)-1) }' | sort -u
 .PHONY: help
 
-# Install CRDs into a cluster
-install: manifests cert-manager
-	kustomize build config/operator/crd | kubectl apply -f -
-.PHONY: install
-
-# Uninstall CRDs from a cluster
-uninstall: manifests
-	kustomize build config/operator/crd | kubectl delete -f -
-	kubectl delete -f examples/common/cert-manager.yaml
-.PHONY: uninstall
-
 cert-manager:
-	cat config/operator/certmanager/cert-manager.yaml > examples/common/cert-manager.yaml
 	kubectl apply -f examples/common/cert-manager.yaml
 	kubectl -n cert-manager wait --for=condition=ready pod -l app=cert-manager --timeout=60s
 	kubectl -n cert-manager wait --for=condition=ready pod -l app=cainjector --timeout=60s
 	kubectl -n cert-manager wait --for=condition=ready pod -l app=webhook --timeout=60s
 .PHONY: cert-manager
 
-# Deploy controller in the configured Kubernetes cluster in ~/.kube/config
-deploy: manifests cert-manager
-	kubectl apply -f examples/common/operator.yaml
-.PHONY: deploy
-
-# Generate manifests e.g. CRD, RBAC etc.
-manifests:
-	cd config/operator/operator && kustomize edit set image controller=$(IMAGE_REF)
-	cd config/manager/manager && kustomize edit set image operator=$(IMAGE_REF)
-
-	controller-gen $(CRD_OPTIONS) paths="$(GO_PACKAGES)" output:crd:dir=config/operator/crd/bases \
-	rbac:roleName=manager-role output:rbac:artifacts:config=config/operator/rbac \
-	webhook output:webhook:artifacts:config=config/operator/webhook
-
-	controller-gen $(CRD_OPTIONS) paths="./pkg/controllers/manager" rbac:roleName=manager-role output:rbac:artifacts:config=config/manager/rbac
-	kustomize build config/operator/default > examples/common/operator.yaml
-	kustomize build config/manager/default > examples/common/manager.yaml
-.PHONY: manifests
-
 image:
 	docker build . -t $(IMAGE_REF)
 .PHONY: image
 
-# Generate code
-generate:
-	controller-gen object:headerFile="hack/boilerplate.go.txt" paths="$(GO_PACKAGES)"
-.PHONY: generate
-
 # Build Helm charts and publish them in Development GCS repo
 helm-publish-dev: HELM_REPOSITORY=https://scylla-operator-charts-dev.storage.googleapis.com/$(HELM_CHANNEL)
 helm-publish-dev: HELM_BUCKET=gs://scylla-operator-charts-dev/$(HELM_CHANNEL)
+helm-publish-dev: HELM_MANIFEST_CACHE_CONTROL :=no-cache, no-store, must-revalidate
 helm-publish-dev: helm-publish
 .PHONY: helm-publish-dev
 
@@ -268,4 +356,6 @@ helm-publish:
 
 	helm repo index $(HELM_LOCAL_REPO) --url $(HELM_REPOSITORY) --merge $(HELM_LOCAL_REPO)/index.yaml
 	gsutil rsync -d $(HELM_LOCAL_REPO) $(HELM_BUCKET)
+
+	gsutil setmeta -h 'Content-Type:text/yaml' -h 'Cache-Control: $(HELM_MANIFEST_CACHE_CONTROL)' '$(HELM_BUCKET)/index.yaml'
 .PHONY: helm-publish

@@ -22,7 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
 	"github.com/scylladb/scylla-operator/pkg/test/integration"
 )
 
@@ -116,7 +116,7 @@ var _ = Describe("Cluster controller", func() {
 		BeforeEach(func() {
 			scylla = testEnv.SingleRackCluster(ns)
 			scylla.Spec.GenericUpgrade = &scyllav1.GenericUpgradeSpec{
-				PollInterval: &metav1.Duration{Duration: 200 * time.Millisecond},
+				PollInterval: metav1.Duration{Duration: 200 * time.Millisecond},
 			}
 
 			Expect(testEnv.Create(ctx, scylla)).To(Succeed())

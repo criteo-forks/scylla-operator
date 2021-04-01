@@ -14,8 +14,8 @@ import (
 	"github.com/magiconair/properties"
 	"github.com/pkg/errors"
 	"github.com/scylladb/go-log"
-	v1 "github.com/scylladb/scylla-operator/pkg/api/v1"
-	"github.com/scylladb/scylla-operator/pkg/cmd/scylla-operator/options"
+	v1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
+	"github.com/scylladb/scylla-operator/pkg/cmd/operator/options"
 	"github.com/scylladb/scylla-operator/pkg/controllers/sidecar/identity"
 	"github.com/scylladb/scylla-operator/pkg/naming"
 	"github.com/scylladb/scylla-operator/pkg/semver"
@@ -210,8 +210,10 @@ func (s *ScyllaConfig) setupEntrypoint(ctx context.Context) (*exec.Cmd, error) {
 		return nil, errors.WithStack(err)
 	}
 
+	// Listen on all interfaces so users or a service mesh can use localhost.
+	listenAddress := "0.0.0.0"
 	args := map[string]*string{
-		"listen-address":        &m.IP,
+		"listen-address":        &listenAddress,
 		"broadcast-address":     &m.StaticIP,
 		"broadcast-rpc-address": &m.StaticIP,
 		"seeds":                 pointer.StringPtr(strings.Join(seeds, ",")),

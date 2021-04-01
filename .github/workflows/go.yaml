@@ -18,28 +18,38 @@ on:
     - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
   pull_request:
     branches:
-    - '*'
+    - '**'
   schedule:
   - cron:  '0 23 * * *' # daily at 11pm
+
+env:
+  go_version: 1.16
+  GOPATH: ${{ github.workspace }}/go
+  git_repo_path: ${{ github.workspace }}/go/src/github.com/scylladb/scylla-operator
+  image_repo_ref: docker.io/scylladb/scylla-operator
+  retention_days: 3
 
 defaults:
   run:
     shell: bash
-
-env:
-  go_version: 1.15.7
-  repo_ref: docker.io/scylladb/scylla-operator
+    working-directory: "./go/src/github.com/scylladb/scylla-operator"
 
 jobs:
   verify:
     name: Verify
     runs-on: ubuntu-20.04
     steps:
+    - uses: actions/checkout@v2
+      with:
+        path: ${{ env.git_repo_path }}
     - name: Setup go
       uses: actions/setup-go@v2
       with:
         go-version: ${{ env.go_version }}
-    - uses: actions/checkout@v2
+    - name: Install tools
+      run: |
+        set -x
+        go install github.com/mikefarah/yq/v4@v4.6.1
     - name: Verify
       run: make verify --warn-undefined-variables
 
@@ -47,11 +57,13 @@ jobs:
     name: Verify dependencies
     runs-on: ubuntu-20.04
     steps:
+    - uses: actions/checkout@v2
+      with:
+        path: ${{ env.git_repo_path }}
     - name: Setup go
       uses: actions/setup-go@v2
       with:
         go-version: ${{ env.go_version }}
-    - uses: actions/checkout@v2
     - name: Verify dependencies
       run: make verify-deps --warn-undefined-variables
 
@@ -59,11 +71,14 @@ jobs:
     name: Build and test
     runs-on: ubuntu-20.04
     steps:
+    - uses: actions/checkout@v2
+      with:
+        path: ${{ env.git_repo_path }}
+        fetch-depth: 0
     - name: Setup go
       uses: actions/setup-go@v2
       with:
         go-version: ${{ env.go_version }}
-    - uses: actions/checkout@v2
     - name: Build
       run: make --warn-undefined-variables
     - name: Make sure new unit tests aren't flaky
@@ -77,13 +92,15 @@ jobs:
     name: Test integration
     runs-on: ubuntu-20.04
     steps:
+    - uses: actions/checkout@v2
+      with:
+        path: ${{ env.git_repo_path }}
     - name: Setup go
       uses: actions/setup-go@v2
       with:
         go-version: ${{ env.go_version }}
     - name: Export GOPATH
       run: echo "GOPATH=$( go env GOPATH )" | tee -a ${GITHUB_ENV}
-    - uses: actions/checkout@v2
     - name: Install python3 deps
       run: pip3 install requests
 #   TODO: Consider cache removal. Caching means that jobs and periodis won't be able to verify that external depepndencies are still present and working.
@@ -100,7 +117,11 @@ jobs:
       if: ${{ github.event_name != 'pull_request' }}
       run: |
         echo "GO_TEST_EXTRA_ARGS=-ginkgo.flakeAttempts=5" | tee -a ${GITHUB_ENV}
+    # Integration tests are currently too flaky so we just make sure they compile but the actual run won't fail the suite.
+    - name: Make sure integration tests compile
+      run: make test-integration GO_TEST_EXTRA_FLAGS=-c --warn-undefined-variables
     - name: Test integration
+      continue-on-error: true
       run: make test-integration --warn-undefined-variables
 
   images:
@@ -108,18 +129,111 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v2
-    - uses: docker/build-push-action@v2
       with:
-        context: .
-        file: ./Dockerfile
-        platforms: linux/amd64
-        push: false
+        path: ${{ env.git_repo_path }}
+        fetch-depth: 0  # also fetch tags
+    - name: Install podman
+      run: |
+        set -x
+        # Install nativelly when we have Ubuntu >= 20.10
+        . /etc/os-release
+        echo "deb https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_${VERSION_ID}/ /" | sudo tee /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
+        curl -L https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_${VERSION_ID}/Release.key | sudo apt-key add -
+        sudo apt-get update
+        sudo apt-get -y install podman
+    - name: Build image
+      run: |
+        set -x
+        podman build --squash -f ./Dockerfile -t '${{ env.image_repo_ref }}:ci' .
+        podman images '${{ env.image_repo_ref }}:ci'
+        podman save '${{ env.image_repo_ref }}:ci' | lz4 - ~/operatorimage.tar.lz4
+    - name: Upload artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: operatorimage.tar.lz4
+        path: ~/operatorimage.tar.lz4
+        if-no-files-found: error
+        retention-days: ${{ env.retention_days }}
 
-  # TODO: Add e2e - use the same image sha from images step
+  test-e2e:
+    name: Test e2e
+    runs-on: ubuntu-20.04
+    needs: images
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        path: ${{ env.git_repo_path }}
+        fetch-depth: 0  # also fetch tags
+    - uses: actions/download-artifact@v2
+      with:
+        name: operatorimage.tar.lz4
+        path: ~/
+    - name: Load image
+      run: |
+        set -x
+        unlz4 ~/operatorimage.tar.lz4 - | docker load
+        # docker looses the registry part on save/load
+        docker tag "$( echo "${image_repo_ref}:ci" | sed -E -e 's~[^/]+/(.*)~\1~' )" "${image_repo_ref}:ci"
+        docker images '${{ env.image_repo_ref }}:ci'
+    - name: Setup go
+      uses: actions/setup-go@v2
+      with:
+        go-version: ${{ env.go_version }}
+    - name: Setup minikube
+      uses: ./go/src/github.com/scylladb/scylla-operator/.github/actions/setup-minikube
+    - name: Install tools
+      run: |
+        set -x
+        go install github.com/mikefarah/yq/v4@v4.6.1
+    - name: Deploy scylla-operator
+      env:
+        ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
+      run: |
+        set -x
+        timeout 10m ./hack/ci-deploy.sh '${{ env.image_repo_ref }}:ci'
+        kubectl get pods -A
+    - name: Tolerate flakes on promotion jobs
+      if: ${{ github.event_name != 'pull_request' }}
+      run: |
+        echo "SCYLLA_OPERATOR_TESTS_FLAKE_ATTEMPTS=5" | tee -a ${GITHUB_ENV}
+    - name: Run e2e
+      env:
+        ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
+      run: |
+        set -x
+        timeout 45m docker run --rm --entrypoint=/usr/bin/scylla-operator-tests -v "/root/.kube/config:/root/.kube/config" '${{ env.image_repo_ref }}:ci' run
+    - name: Dump cluster state
+      if: ${{ always() }}
+      env:
+        ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
+      working-directory: ${{ runner.temp }}
+      run: timeout 10m ${{ env.git_repo_path }}/hack/ci-gather-artifacts.sh
+    - name: Get machine logs and info
+      if: ${{ always() }}
+      working-directory: ${{ runner.temp }}/e2e-artifacts
+      run: |
+        set -x
+        docker info > docker.info
+        docker images -a > docker.images
+        docker stats -a --no-stream --no-trunc > docker.stats
+        free -h > free
+        journalctl -u kubelet > kubelet.log
+    - name: Compress artifacts
+      if: ${{ always() }}
+      working-directory: ${{ runner.temp }}
+      run: tar -c --use-compress-program=lz4 -f ./e2e-artifacts.tar.lz4 "e2e-artifacts/"
+    - name: Upload artifacts
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v2
+      with:
+        name: e2e-artifacts.tar.lz4
+        path: ${{ runner.temp }}/e2e-artifacts.tar.lz4
+        if-no-files-found: error
+        retention-days: ${{ env.retention_days }}
 
   # TODO: Add upgrade-e2e - use the same image sha from images step
 
-  # Dummy step for different propromotion jobs to depend on
+  # Dummy step for different promotion jobs to depend on
   success:
     name: All tests successfull
     runs-on: ubuntu-20.04
@@ -127,12 +241,14 @@ jobs:
     - verify
     - verify-deps
     - build-and-test
-    - test-integration
+#    - test-integration  # flaky
     - images
-    # TODO: Depend on e2e when available
+    - test-e2e
     # TODO: Depend on upgrade-e2e when available
     steps:
-    - run: /bin/true
+    - name: Always succeed
+      working-directory: .
+      run: true
 
   promote:
     name: Promote artifacts
@@ -142,8 +258,13 @@ jobs:
     steps:
     - uses: actions/checkout@v2
       with:
+        path: ${{ env.git_repo_path }}
         # Helm Chart version needs to be semantic, we need tags in checked out repo to determine latest one.
         fetch-depth: 0
+    - name: Setup go
+      uses: actions/setup-go@v2
+      with:
+        go-version: ${{ env.go_version }}
     - name: Determine promotion tag
       if: ${{ github.event_name != 'schedule' }}
       run: |
@@ -156,20 +277,27 @@ jobs:
         IMAGE_TAG=nightly
         echo "IMAGE_TAG=${IMAGE_TAG}" | tee -a ${GITHUB_ENV}
         echo "HELM_CHART_VERSION_SUFFIX=-${IMAGE_TAG}" | tee -a ${GITHUB_ENV}
+    - uses: actions/download-artifact@v2
+      with:
+        name: operatorimage.tar.lz4
+        path: ~/
+    - name: Load image
+      run: |
+        set -x
+        unlz4 ~/operatorimage.tar.lz4 - | docker load
+        # docker looses the registry part on save/load
+        docker tag "$( echo "${image_repo_ref}:ci" | sed -E -e 's~[^/]+/(.*)~\1~' )" "${image_repo_ref}:ci"
+        docker images '${{ env.image_repo_ref }}:ci'
     - name: Login to DockerHub
       uses: docker/login-action@v1
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
-    # TODO: use the same image sha from images step - has to match what we used for e2e
-    - name: Publish container image
-      uses: docker/build-push-action@v2
-      with:
-        context: .
-        file: ./Dockerfile
-        platforms: linux/amd64
-        push: true
-        tags: ${{ env.repo_ref }}:${{ env.IMAGE_TAG }}
+    - name: Promote image
+      run: |
+        set -x
+        docker tag '${{ env.image_repo_ref }}:ci' '${{ env.image_repo_ref }}:${{ env.IMAGE_TAG }}'
+        docker push '${{ env.image_repo_ref }}:${{ env.IMAGE_TAG }}'
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@master
       with:
@@ -179,3 +307,24 @@ jobs:
         HELM_CHANNEL: latest
         HELM_APP_VERSION: ${{ env.IMAGE_TAG }}
       run: make helm-publish
+
+  failure-notifications:
+    name: Failure notifications
+    runs-on: ubuntu-20.04
+    needs:
+    - success
+    - promote
+    if: ${{ failure() && github.event_name != 'pull_request' }}
+    steps:
+    - name: Report failures to Slack
+      if: ${{ always() }}
+      working-directory: .
+      run: |
+        # We have to avoid printing the secret to logs.
+        set +x
+        curl -X POST -H 'Content-type: application/json' --data @<( cat <<-EOF
+        {
+          "text": ":warning: CI workflow \"${{ github.workflow }}\" triggered on \"${{ github.event_name }}\" event from ${{ github.ref }} (${{ github.sha }}) failed!\n:fire_extinguisher: See https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} for details.:fire:\ncc: <@U01L8R3RYFN> <@UN90LVATC>"
+        }
+        EOF
+        ) '${{ secrets.SLACK_WEBHOOK_URL }}'

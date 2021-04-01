@@ -18,30 +18,30 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 
+	"github.com/pkg/errors"
 	"github.com/scylladb/go-log"
-	"github.com/scylladb/scylla-operator/pkg/cmd/scylla-operator/options"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/scylla/v1"
+	"github.com/scylladb/scylla-operator/pkg/cmd/operator/options"
+	"github.com/scylladb/scylla-operator/pkg/naming"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/source"
-
-	"github.com/pkg/errors"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 const concurrency = 1
@@ -63,6 +63,8 @@ type ClusterReconciler struct {
 	Scheme *runtime.Scheme
 	Logger log.Logger
 }
+
+var _ reconcile.Reconciler = &ClusterReconciler{}
 
 func New(ctx context.Context, mgr ctrl.Manager, logger log.Logger) (*ClusterReconciler, error) {
 	kubeClient := kubernetes.NewForConfigOrDie(mgr.GetConfig())
@@ -89,18 +91,8 @@ func New(ctx context.Context, mgr ctrl.Manager, logger log.Logger) (*ClusterReco
 	}, nil
 }
 
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete;update
-// +kubebuilder:rbac:groups="",resources=persistentvolumes,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=events,verbs=create;update;patch
-// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=scylla.scylladb.com,resources=scyllaclusters,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=scylla.scylladb.com,resources=scyllaclusters/status,verbs=update;get;patch
-
-func (cc *ClusterReconciler) Reconcile(request ctrl.Request) (ctrl.Result, error) {
-	ctx := log.WithNewTraceID(context.Background())
+func (cc *ClusterReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+	ctx = log.WithNewTraceID(ctx)
 	cc.Logger.Debug(ctx, "Reconcile request", "request", request.String())
 	// Fetch the Cluster instance
 	c := &scyllav1.ScyllaCluster{}
@@ -118,17 +110,25 @@ func (cc *ClusterReconciler) Reconcile(request ctrl.Request) (ctrl.Result, error
 	}
 
 	logger := cc.Logger.With("cluster", c.Namespace+"/"+c.Name, "resourceVersion", c.ResourceVersion)
-	copy := c.DeepCopy()
-	if err = cc.sync(copy); err != nil {
-		logger.Error(ctx, "An error occurred during cluster reconciliation", "error", err)
-		return reconcile.Result{}, errors.Wrap(err, "sync failed")
+	clusterCopy := c.DeepCopy()
+	if c.DeletionTimestamp != nil {
+		logger.Info(ctx, "Updating cluster status for deleted cluster")
+		if err := cc.updateStatus(ctx, clusterCopy); err != nil {
+			cc.Recorder.Event(c, corev1.EventTypeWarning, naming.ErrSyncFailed, fmt.Sprintf(MessageUpdateStatusFailed, err))
+			return reconcile.Result{Requeue: true}, errors.Wrap(err, "failed to update status")
+		}
+	} else {
+		if err = cc.sync(clusterCopy); err != nil {
+			logger.Error(ctx, "An error occurred during cluster reconciliation", "error", err)
+			return reconcile.Result{}, errors.Wrap(err, "sync failed")
+		}
 	}
 
 	// Update status if needed
 	// If there's a change in the status, update it
-	if !reflect.DeepEqual(c.Status, copy.Status) {
+	if !reflect.DeepEqual(c.Status, clusterCopy.Status) {
 		logger.Info(ctx, "Writing cluster status.")
-		if err := cc.Status().Update(ctx, copy); err != nil {
+		if err := cc.Status().Update(ctx, clusterCopy); err != nil {
 			if apierrors.IsConflict(err) {
 				logger.Info(ctx, "Failed to update cluster status", "error", err)
 			} else {
