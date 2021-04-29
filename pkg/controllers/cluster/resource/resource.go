@@ -92,6 +92,27 @@ func MemberServiceForPod(pod *corev1.Pod, cluster *scyllav1.ScyllaCluster) *core
 	return service
 }
 
+func ServiceForMultiDcSeed(multiDcServiceName, seed string, cluster *scyllav1.ScyllaCluster) *corev1.Service {
+	labels := naming.ClusterLabels(cluster)
+	labels[naming.MultiDcSeedLabel] = naming.LabelValueTrue
+	labels[naming.IpLabel] = seed
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            multiDcServiceName,
+			Namespace:       cluster.Namespace,
+			OwnerReferences: []metav1.OwnerReference{util.NewControllerRef(cluster)},
+			Labels:          labels,
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: corev1.ClusterIPNone,
+			Type:      corev1.ServiceTypeClusterIP,
+			Ports:     memberServicePorts(cluster),
+		},
+	}
+
+	return service
+}
+
 func memberServicePorts(cluster *scyllav1.ScyllaCluster) []corev1.ServicePort {
 	ports := []corev1.ServicePort{
 		{

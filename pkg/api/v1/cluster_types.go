@@ -63,6 +63,9 @@ type ClusterSpec struct {
 	// Backups specifies backup task in Scylla Manager.
 	// When Scylla Manager is not installed, these will be ignored.
 	Backups []BackupTaskSpec `json:"backups,omitempty"`
+	// MultiDcCluster configuration for multi DC cluster
+	// Specifies the external seed to use
+	MultiDcCluster *MultiDcClusterSpec `json:"multiDcCluster,omitempty"`
 }
 
 // GenericUpgradeFailureStrategy allows to specify how upgrade logic should handle failures.
@@ -124,6 +127,11 @@ type RepairTaskSpec struct {
 	SmallTableThreshold *string `json:"smallTableThreshold,omitempty" mapstructure:"small_table_threshold,omitempty"`
 	// Host to repair, by default all hosts are repaired
 	Host *string `json:"host,omitempty" mapstructure:"host,omitempty"`
+}
+
+type MultiDcClusterSpec struct {
+	InitCluster bool     `json:"initCluster,omitempty"`
+	Seeds       []string `json:"seeds,omitempty" mapstructure:"seeds,omitempty"`
 }
 
 type BackupTaskSpec struct {
@@ -239,6 +247,10 @@ func (a *AlternatorSpec) Enabled() bool {
 	return a != nil && a.Port > 0
 }
 
+func (m *MultiDcClusterSpec) Enabled() bool {
+	return m != nil
+}
+
 type RepairTaskStatus struct {
 	RepairTaskSpec `json:",inline" mapstructure:",squash"`
 	ID             string `json:"id"`
@@ -263,6 +275,8 @@ type ClusterStatus struct {
 	Backups []BackupTaskStatus `json:"backups,omitempty"`
 	// Upgrade reflects state of ongoing upgrade procedure.
 	Upgrade *UpgradeStatus `json:"upgrade,omitempty"`
+	// Bootstrap indicate if the cluster has been well bootstrap from multi dc seed.
+	Bootstrap string `json:"bootstrap,omitempty"`
 }
 
 // UpgradeStatus contains state of ongoing upgrade procedure.

@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -141,6 +142,73 @@ var _ = Describe("Cluster controller", func() {
 
 			return service.Labels
 		}).Should(HaveKeyWithValue(naming.IpLabel, "20.20.20.20"))
+	})
+
+	It("Create multi dc seed", func() {
+		scylla := singleNodeCluster(ns)
+		scylla.Spec.Network.HostNetworking = true
+		scylla.Spec.MultiDcCluster = &scyllav1.MultiDcClusterSpec{
+			Seeds: []string{"10.10.10.10"},
+		}
+
+		Expect(testEnv.Create(ctx, scylla)).To(Succeed())
+		defer func() {
+			Expect(testEnv.Delete(ctx, scylla)).To(Succeed())
+		}()
+
+		Expect(testEnv.WaitForCluster(ctx, scylla)).To(Succeed())
+		Expect(testEnv.Refresh(ctx, scylla)).To(Succeed())
+
+		services, err := multiDcService(ns.Namespace, len(scylla.Spec.MultiDcCluster.Seeds))
+		Expect(err).To(BeNil())
+		Expect(services).To(Not(BeEmpty()))
+
+		service := services[0]
+
+		Eventually(func() map[string]string {
+			Expect(testEnv.Refresh(ctx, &service)).To(Succeed())
+
+			return service.Labels
+		}).Should(HaveKeyWithValue(naming.IpLabel, "10.10.10.10"))
+	})
+
+	It("Bootstrap ongoing", func() {
+		scylla := singleNodeCluster(ns)
+		scylla.Spec.Network.HostNetworking = true
+		scylla.Spec.MultiDcCluster = &scyllav1.MultiDcClusterSpec{
+			Seeds: []string{"10.10.10.10"},
+		}
+
+		Expect(testEnv.Create(ctx, scylla)).To(Succeed())
+		defer func() {
+			Expect(testEnv.Delete(ctx, scylla)).To(Succeed())
+		}()
+
+		Expect(testEnv.WaitForCluster(ctx, scylla)).To(Succeed())
+
+		// Boostratp state should be ongoing as not all sts members are ready
+		Eventually(func() bool {
+			Expect(testEnv.Refresh(ctx, scylla)).To(Succeed())
+
+			return scylla.Status.Bootstrap == "ongoing"
+		}, shortWait).Should(BeTrue())
+
+		Expect(testEnv.Refresh(ctx, scylla)).To(Succeed())
+		sstStub := integration.NewStatefulSetOperatorStub(testEnv)
+		rack := scylla.Spec.Datacenter.Racks[0]
+
+		for _, replicas := range testEnv.ClusterScaleSteps(rack.Members) {
+			Expect(testEnv.AssertRackScaled(ctx, rack, scylla, replicas)).To(Succeed())
+			Expect(sstStub.CreatePods(ctx, scylla, true)).To(Succeed())
+		}
+
+		// Boostrap state should be finished as all sts members are ready
+		Eventually(func() bool {
+			Expect(testEnv.Refresh(ctx, scylla)).To(Succeed())
+
+			return scylla.Status.Bootstrap == "finished"
+		}, shortWait).Should(BeTrue())
+
 	})
 
 	Context("Node replace", func() {
@@ -277,17 +345,29 @@ var _ = Describe("Cluster controller", func() {
 func rackMemberService(namespace string, rack scyllav1.RackSpec, cluster *scyllav1.ScyllaCluster) ([]corev1.Service, error) {
 	services := &corev1.ServiceList{}
 	Expect(wait.PollImmediate(retryInterval, timeout, func() (bool, error) {
-		err := testEnv.List(ctx, services, &client.ListOptions{
-			Namespace:     namespace,
-			LabelSelector: naming.RackSelector(rack, cluster),
-		})
-		if err != nil {
-			return false, err
-		}
-		return len(services.Items) == int(rack.Members), nil
+		return getService(namespace, naming.RackSelector(rack, cluster), int(rack.Members), services)
 	})).To(Succeed())
 
 	return services.Items, nil
+}
+
+func multiDcService(namespace string, multiDcSeedsCount int) ([]corev1.Service, error) {
+	services := &corev1.ServiceList{}
+	Expect(wait.PollImmediate(retryInterval, timeout, func() (bool, error) {
+		return getService(namespace, naming.MultiDcSeedSelector(), multiDcSeedsCount, services)
+	})).To(Succeed())
+	return services.Items, nil
+}
+
+func getService(namespace string, selector labels.Selector, count int, services *corev1.ServiceList) (bool, error) {
+	err := testEnv.List(ctx, services, &client.ListOptions{
+		Namespace:     namespace,
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(services.Items) == count, nil
 }
 
 func nonSeedServices(namespace string, rack scyllav1.RackSpec, cluster *scyllav1.ScyllaCluster) ([]corev1.Service, error) {

@@ -1438,6 +1438,18 @@ spec:
                   description: PollInterval specifies how often upgrade logic polls on state updates. Increasing this value should lower number of requests sent to apiserver, but it may affect overall time spent during upgrade.
                   type: string
               type: object
+            multiDcCluster:
+              description: Configuration for multi DC cluster
+              properties:
+                initCluster:
+                  description: Indicate if this cluster is the initial cluster. Init cluster rely on local seeds while non init one only rely on multi dc seeds during bootstrap and then on local seeds only.
+                  type: boolean
+                seeds:
+                  description: List of seeds.
+                  items:
+                    type: string
+                  type: array
+              type: object
             network:
               description: Networking config
               properties:
@@ -1577,6 +1589,9 @@ spec:
                 - name
                 type: object
               type: array
+            bootstrap:
+              description: bootstrap indicate if the cluster has been well bootstrap from multi dc seed.
+              type: string
             managerId:
               description: ManagerID contains ID under which cluster was registered in Scylla Manager.
               type: string

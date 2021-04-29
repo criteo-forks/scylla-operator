@@ -17,6 +17,7 @@ import (
 const (
 	// Messages to display when experiencing an error.
 	MessageHeadlessServiceSyncFailed = "Failed to sync Headless Service for cluster"
+	MessageMultiDcServicesSyncFailed = "Failed to sync MultiDcServices for cluster"
 	MessageMemberServicesSyncFailed  = "Failed to sync MemberServices for cluster"
 	MessageUpdateStatusFailed        = "Failed to update status for cluster: %+v"
 	MessageCleanupFailed             = "Failed to clean up cluster resources"
@@ -51,6 +52,14 @@ func (cc *ClusterReconciler) sync(c *scyllav1.ScyllaCluster) error {
 	if err := cc.syncClusterHeadlessService(ctx, c); err != nil {
 		cc.Recorder.Event(c, corev1.EventTypeWarning, naming.ErrSyncFailed, MessageHeadlessServiceSyncFailed)
 		return errors.Wrap(err, "failed to sync headless service")
+	}
+
+	// Sync Multi Dc Services
+	if c.Spec.MultiDcCluster.Enabled() {
+		if err := cc.syncMultiDcServices(ctx, c); err != nil {
+			cc.Recorder.Event(c, corev1.EventTypeWarning, naming.ErrSyncFailed, MessageMultiDcServicesSyncFailed)
+			return errors.Wrap(err, "failed to sync multi dc service")
+		}
 	}
 
 	// Sync Cluster Member Services

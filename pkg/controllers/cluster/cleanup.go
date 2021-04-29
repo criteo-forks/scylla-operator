@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"context"
-
 	"github.com/pkg/errors"
 	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
 	"github.com/scylladb/scylla-operator/pkg/controllers/cluster/util"
@@ -51,6 +50,20 @@ func (cc *ClusterReconciler) cleanup(ctx context.Context, c *scyllav1.ScyllaClus
 			}
 		}
 
+	}
+
+	if c.Spec.MultiDcCluster.Enabled() {
+		// Get all multi dc seeds services
+		err := cc.List(ctx, svcList, &client.ListOptions{
+			Namespace:     c.Namespace,
+			LabelSelector: naming.MultiDcSeedSelector(),
+		})
+		if err != nil {
+			return errors.Wrap(err, "listing multi dc seeds services")
+		}
+		if err := cc.multiDcSeedsCleanup(ctx, c, svcList); err != nil {
+			return errors.Wrap(err, "multi dc seed cleanup")
+		}
 	}
 	return nil
 }
@@ -105,6 +118,31 @@ func (cc *ClusterReconciler) orphanedCleanup(ctx context.Context, c *scyllav1.Sc
 			cc.Logger.Info(ctx, "Found orphaned PVC, triggering replace node", "member", svc.Name)
 			if err := util.MarkAsReplaceCandidate(ctx, &svc, cc.KubeClient); err != nil {
 				return errors.Wrap(err, "mark orphaned service as replace")
+			}
+		}
+	}
+
+	return nil
+}
+
+func (cc *ClusterReconciler) multiDcSeedsCleanup(ctx context.Context, c *scyllav1.ScyllaCluster, svcs *corev1.ServiceList) error {
+	multiDcSeedsCount := int32(len(c.Spec.MultiDcCluster.Seeds))
+	multiDcSeedsServicesCount := int32(len(svcs.Items))
+	// If there are more services than members, some services need to be cleaned up
+	if multiDcSeedsServicesCount > multiDcSeedsCount {
+		// maxIndex is the maximum index that should be present in a
+		// multi dc seed service
+		maxIndex := multiDcSeedsCount - 1
+		for _, svc := range svcs.Items {
+			svcIndex, err := naming.IndexFromName(svc.Name)
+			if err != nil {
+				return errors.WithStack(err)
+			}
+			if svcIndex > maxIndex {
+				// Delete Service
+				if err = cc.Delete(ctx, &svc); err != nil && !apierrors.IsNotFound(err) {
+					return errors.Wrap(err, "failed to delete multi dc service")
+				}
 			}
 		}
 	}

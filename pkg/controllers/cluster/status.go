@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"fmt"
-
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/pkg/errors"
@@ -135,6 +134,18 @@ func (cc *ClusterReconciler) updateStatus(ctx context.Context, cluster *scyllav1
 
 		// Update Status for Rack
 		cluster.Status.Racks[rack.Name] = rackStatus
+	}
+
+	// Update bootstrap status if multi dc cluster and cluster is not already boostrap
+	if cluster.Spec.MultiDcCluster.Enabled() && cluster.Status.Bootstrap != naming.BoostrapFinished {
+		bootstrapStatus := naming.BoostrapFinished
+		for _, rack := range cluster.Spec.Datacenter.Racks {
+			if cluster.Status.Racks[rack.Name].ReadyMembers != rack.Members {
+				bootstrapStatus = naming.BoostrapOngoing
+				break
+			}
+		}
+		cluster.Status.Bootstrap = bootstrapStatus
 	}
 
 	return nil

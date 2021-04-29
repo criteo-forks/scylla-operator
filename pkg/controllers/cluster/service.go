@@ -2,7 +2,7 @@ package cluster
 
 import (
 	"context"
-
+	"fmt"
 	"github.com/pkg/errors"
 	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
 	"github.com/scylladb/scylla-operator/pkg/controllers/cluster/resource"
@@ -80,6 +80,33 @@ func serviceMutateFn(ctx context.Context, newService *corev1.Service, client cli
 		//if !reflect.DeepEqual(newService.Spec, existingService.Spec) {
 		//	return client.Update(ctx, existing)
 		//}
+		return nil
+	}
+}
+
+func (cc *ClusterReconciler) syncMultiDcServices(ctx context.Context, cluster *scyllav1.ScyllaCluster) error {
+	for id, seed := range cluster.Spec.MultiDcCluster.Seeds {
+		multiDcServiceName := fmt.Sprintf("%s-%s-multi-dc-seed-%d", cluster.Name, cluster.Spec.Datacenter.Name, id)
+
+		cc.Logger.Info(ctx, "Create multi dc seed", "multiDcServiceName", multiDcServiceName)
+		multiDcService := resource.ServiceForMultiDcSeed(multiDcServiceName, seed, cluster)
+		op, err := controllerutil.CreateOrUpdate(ctx, cc.Client, multiDcService, serviceMultiDcMutateFn(multiDcService, multiDcService.DeepCopy()))
+		if err != nil {
+			return errors.Wrapf(err, "error syncing multi dc service %s", multiDcService.Name)
+		}
+		switch op {
+		case controllerutil.OperationResultCreated:
+			cc.Logger.Info(ctx, "Multi Dc seed service created", "multiDcSeed", multiDcService.Name, "labels", multiDcService.Labels)
+		case controllerutil.OperationResultUpdated:
+			cc.Logger.Info(ctx, "Multi Dc seed service updated", "multiDcSeed", multiDcService.Name, "labels", multiDcService.Labels)
+		}
+	}
+	return nil
+}
+
+func serviceMultiDcMutateFn(service *corev1.Service, newService *corev1.Service) func() error {
+	return func() error {
+		service.ObjectMeta.Labels[naming.IpLabel] = newService.ObjectMeta.Labels[naming.IpLabel]
 		return nil
 	}
 }
