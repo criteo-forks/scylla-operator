@@ -208,6 +208,42 @@ func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return errors.Wrap(err, "services watch setup failed")
 	}
 
+	/////////////////////////////////////////////
+	// Watch Pods created by a STS //
+	/////////////////////////////////////////////
+	scyllaOnlyPods := func(meta metav1.Object) bool {
+		if meta.GetLabels()["app.kubernetes.io/managed-by"] != "scylla-operator" {
+			return false
+		}
+		return true
+	}
+	scyllaOnlyPodsPredicate := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return scyllaOnlyPods(e.Meta)
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return scyllaOnlyPods(e.MetaNew)
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return scyllaOnlyPods(e.Meta)
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return scyllaOnlyPods(e.Meta)
+		},
+	}
+
+	err = c.Watch(
+		&source.Kind{Type: &corev1.Pod{}},
+		&EnqueueRequestForPod{
+			KubeClient: r.KubeClient,
+		},
+		predicate.ResourceVersionChangedPredicate{},
+		scyllaOnlyPodsPredicate,
+	)
+	if err != nil {
+		return errors.Wrap(err, "pods watch setup failed")
+	}
+
 	return nil
 }
 
