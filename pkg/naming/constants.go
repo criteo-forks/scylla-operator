@@ -40,6 +40,7 @@ const (
 	DatacenterNameLabel = "scylla/datacenter"
 	RackNameLabel       = "scylla/rack"
 	ManagedHash         = "scylla-operator.scylladb.com/managed-hash"
+	MultiDcSeedLabel    = "scylla/multi-dc-seed"
 
 	AppName         = "scylla"
 	OperatorAppName = "scylla-operator"
@@ -66,6 +67,14 @@ const (
 	// Cluster fails to sync due to a resource of the same name already
 	// existing.
 	ErrSyncFailed = "ErrSyncFailed"
+)
+
+// Bootstrap Values
+const (
+	// BoostrapOngoing indicate cluster is still bootstraping from multi dc seeds
+	BoostrapOngoing = "ongoing"
+	// BoostrapFinished indicate cluster has finished bootstraping from multi dc seeds
+	BoostrapFinished = "finished"
 )
 
 // Configuration Values

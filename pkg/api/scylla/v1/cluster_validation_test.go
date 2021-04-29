@@ -38,6 +38,11 @@ func TestCheckValues(t *testing.T) {
 		},
 	})
 
+	nonValidMultiDcCluster := validCluster.DeepCopy()
+	nonValidMultiDcCluster.Spec.MultiDcCluster = &v1.MultiDcClusterSpec{
+		Seeds: []string{"10.10.10.10", "20.20.20.20"},
+	}
+
 	tests := []struct {
 		name    string
 		obj     *v1.ScyllaCluster
@@ -61,6 +66,11 @@ func TestCheckValues(t *testing.T) {
 		{
 			name:    "non-unique names in manager tasks spec",
 			obj:     nonUniqueManagerTaskNames,
+			allowed: false,
+		},
+		{
+			name:    "hostNetworking not enabled with multi dc",
+			obj:     nonValidMultiDcCluster,
 			allowed: false,
 		},
 	}

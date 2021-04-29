@@ -97,6 +97,12 @@ func (m *Member) GetSeeds(ctx context.Context, kubeClient kubernetes.Interface, 
 
 	sel := fmt.Sprintf("%s,%s=%s", naming.SeedLabel, naming.ClusterNameLabel, m.Cluster)
 
+	// If the cluster is a multi DC cluster, not the initial cluster and is still bootstraping
+	// we only take multi dc seeds service to ensure cluster will not bootstrap without joining the multi DC cluster seeds
+	if cluster.Spec.MultiDcCluster.Enabled() && cluster.Status.Bootstrap != naming.BoostrapFinished && !cluster.Spec.MultiDcCluster.InitCluster {
+		sel = fmt.Sprintf("%s=%s,%s=%s", naming.MultiDcSeedLabel, naming.LabelValueTrue, naming.ClusterNameLabel, m.Cluster)
+	}
+
 	const maxRetryCount = 5
 	for retryCount := 0; ; retryCount++ {
 		services, err = kubeClient.CoreV1().Services(m.Namespace).List(ctx, metav1.ListOptions{LabelSelector: sel})

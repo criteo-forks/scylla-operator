@@ -23,6 +23,14 @@ spec:
   {{- if .Values.cpuset }}
   cpuset: {{ .Values.cpuset }}
   {{- end }}
+  {{- if .Values.multiDcCluster.enabled }}
+  multiDcCluster:
+    initCluster: {{ .Values.multiDcCluster.initCluster }}
+    {{- with .Values.multiDcCluster.seeds }}
+    seeds:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
   {{- if .Values.automaticOrphanedNodeCleanup }}
   automaticOrphanedNodeCleanup: {{ .Values.automaticOrphanedNodeCleanup }}
   {{- end }}
