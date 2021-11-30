@@ -113,7 +113,7 @@ const (
 
 func (a *ClusterVersionUpgrade) upgradeProcedure(ctx context.Context) upgradeProcedure {
 	if a.Cluster.Status.Upgrade != nil {
-		return genericUpgradeProcedure
+		return patchUpgradeProcedure
 	}
 	var fromVersion string
 	// Fetch version from any rack status, they should be in the same version.
@@ -125,19 +125,19 @@ func (a *ClusterVersionUpgrade) upgradeProcedure(ctx context.Context) upgradePro
 	oldVersion, err := semver.Parse(fromVersion)
 	if err != nil {
 		a.logger.Info(ctx, "Invalid from semantic version", "version", fromVersion)
-		return genericUpgradeProcedure
+		return patchUpgradeProcedure
 	}
 	newVersion, err := semver.Parse(a.Cluster.Spec.Version)
 	if err != nil {
 		a.logger.Info(ctx, "Invalid to semantic version", "version", fromVersion)
-		return genericUpgradeProcedure
+		return patchUpgradeProcedure
 	}
 
 	// Check that version remained the same
 	if newVersion.Major == oldVersion.Major && newVersion.Minor == oldVersion.Minor {
 		return patchUpgradeProcedure
 	}
-	return genericUpgradeProcedure
+	return patchUpgradeProcedure
 }
 
 // TODO:(zimnx) Refactor patch version upgrade into rack_synchronized action.
