@@ -124,9 +124,10 @@ func checkValues(c *ScyllaCluster) error {
 
 func checkTransitions(old, new *ScyllaCluster) error {
 	// Check that repository remained the same
-	if !reflect.DeepEqual(old.Spec.Repository, new.Spec.Repository) {
-		return errors.Errorf("repository change is currently not supported, old=%v, new=%v", *old.Spec.Repository, *new.Spec.Repository)
-	}
+	// We actually want to be able to change the repository, it should retain equivalent tag scheme
+	// if !reflect.DeepEqual(old.Spec.Repository, new.Spec.Repository) {
+	// 	return errors.Errorf("repository change is currently not supported, old=%v, new=%v", *old.Spec.Repository, *new.Spec.Repository)
+	// }
 
 	// Check that the datacenter name didn't change
 	if old.Spec.Datacenter.Name != new.Spec.Datacenter.Name {
