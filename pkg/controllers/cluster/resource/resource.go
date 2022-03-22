@@ -407,6 +407,10 @@ func StatefulSetForRack(r scyllav1.RackSpec, c *scyllav1.ScyllaCluster, sidecarI
 
 	sysctlContainer := sysctlInitContainer(c.Spec.Sysctls, sidecarImage)
 	if sysctlContainer != nil {
+		// Override default busybox image for sysctl-buddy container by operator image.
+		// sysctl command provided by busybox doesn't respect return code of original sysctl.
+		// When passing -e to ignore unknown settings, busybox sysctl still returns 1 whereas original sysctl returns 0
+		sysctlContainer.Image = sidecarImage
 		sts.Spec.Template.Spec.InitContainers = append(sts.Spec.Template.Spec.InitContainers, *sysctlContainer)
 	}
 	for _, VolumeMount := range r.VolumeMounts {
@@ -483,7 +487,7 @@ func sysctlInitContainer(sysctls []string, image string) *corev1.Container {
 		Command: []string{
 			"/bin/sh",
 			"-c",
-			fmt.Sprintf("sysctl -w %s", strings.Join(sysctls, " ")),
+			fmt.Sprintf("sysctl -e -w %s", strings.Join(sysctls, " ")),
 		},
 	}
 }
