@@ -34,6 +34,10 @@ spec:
   {{- if .Values.automaticOrphanedNodeCleanup }}
   automaticOrphanedNodeCleanup: {{ .Values.automaticOrphanedNodeCleanup }}
   {{- end }}
+  {{- with .Values.scyllaArgs }}
+  scyllaArgs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- with .Values.sysctls }}
   sysctls:
     {{- toYaml . | nindent 4 }}
