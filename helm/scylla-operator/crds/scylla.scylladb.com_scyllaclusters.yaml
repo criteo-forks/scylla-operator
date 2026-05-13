@@ -1619,6 +1619,9 @@ spec:
               scyllaArgs:
                 description: ScyllaArgs will be appended to Scylla binary during startup. This is supported from 4.2.0 Scylla version.
                 type: string
+              serviceAccountName:
+                description: ServiceAccountName is the name of the ServiceAccount that Scylla member pods will run under. When empty, the operator falls back to "<clusterName>-member", preserving the historical default.
+                type: string
               sysctls:
                 description: 'Sysctl properties to be applied during initialization given as a list of key=value pairs. Example: fs.aio-max-nr=232323'
                 items:

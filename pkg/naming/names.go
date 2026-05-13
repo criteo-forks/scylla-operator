@@ -44,6 +44,9 @@ func ServiceDNSName(service string, c *scyllav1.ScyllaCluster) string {
 }
 
 func ServiceAccountNameForMembers(c *scyllav1.ScyllaCluster) string {
+	if c.Spec.ServiceAccountName != "" {
+		return c.Spec.ServiceAccountName
+	}
 	return fmt.Sprintf("%s-member", c.Name)
 }
 

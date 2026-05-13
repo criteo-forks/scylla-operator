@@ -66,6 +66,10 @@ type ClusterSpec struct {
 	// MultiDcCluster configuration for multi DC cluster
 	// Specifies the external seed to use
 	MultiDcCluster *MultiDcClusterSpec `json:"multiDcCluster,omitempty"`
+	// ServiceAccountName is the name of the ServiceAccount that Scylla member pods
+	// will run under. When empty, the operator falls back to "<clusterName>-member",
+	// preserving the historical default.
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 }
 
 // GenericUpgradeFailureStrategy allows to specify how upgrade logic should handle failures.
