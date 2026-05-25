@@ -17,9 +17,9 @@ import (
 
 type rackSynchronizedSubAction interface {
 	// RackUpdated should return whether requested update is already applied to a rack sts.
-	RackUpdated(sts *appsv1.StatefulSet) (bool, error)
+	RackUpdated(rack scyllav1.RackSpec, sts *appsv1.StatefulSet) (bool, error)
 	// Update performs desired update.
-	Update(sts *appsv1.StatefulSet) error
+	Update(rack scyllav1.RackSpec, sts *appsv1.StatefulSet) error
 	// Name of action.
 	Name() string
 }
@@ -49,12 +49,12 @@ func (a rackSynchronizedAction) Execute(ctx context.Context, s *State) error {
 			return errors.Wrap(err, "get rack statefulset")
 		}
 
-		rackUpdated, err := a.subAction.RackUpdated(sts)
+		rackUpdated, err := a.subAction.RackUpdated(rack, sts)
 		if err != nil {
 			return errors.Wrap(err, "determine if rack needs update")
 		}
 		if !rackUpdated {
-			if err := a.subAction.Update(sts); err != nil {
+			if err := a.subAction.Update(rack, sts); err != nil {
 				return errors.Wrap(err, "update rack")
 			}
 

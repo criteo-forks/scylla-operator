@@ -19,7 +19,7 @@ type SidecarUpgrade struct {
 	sidecar corev1.Container
 }
 
-func (a *SidecarUpgrade) RackUpdated(sts *appsv1.StatefulSet) (bool, error) {
+func (a *SidecarUpgrade) RackUpdated(_ scyllav1.RackSpec, sts *appsv1.StatefulSet) (bool, error) {
 	sidecarIdx, err := naming.FindSidecarInjectorContainer(sts.Spec.Template.Spec.InitContainers)
 	if err != nil {
 		return false, errors.Wrap(err, "find sidecar container in pod")
@@ -28,7 +28,7 @@ func (a *SidecarUpgrade) RackUpdated(sts *appsv1.StatefulSet) (bool, error) {
 	return sts.Spec.Template.Spec.InitContainers[sidecarIdx].Image == a.sidecar.Image, nil
 }
 
-func (a *SidecarUpgrade) Update(sts *appsv1.StatefulSet) error {
+func (a *SidecarUpgrade) Update(_ scyllav1.RackSpec, sts *appsv1.StatefulSet) error {
 	initContainers := sts.Spec.Template.Spec.InitContainers
 	sidecarIdx, err := naming.FindSidecarInjectorContainer(initContainers)
 	if err != nil {

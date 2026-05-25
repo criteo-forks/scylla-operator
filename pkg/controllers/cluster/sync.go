@@ -143,6 +143,21 @@ func (cc *ClusterReconciler) nextAction(ctx context.Context, cluster *scyllav1.S
 		}
 	}
 
+	// Reconcile spec-derived pod-template settings (service account, scheduling,
+	// labels, container resources) onto rack StatefulSets when they diverge.
+	// This catches edits to spec fields that only StatefulSetForRack consumes at
+	// creation time, e.g. spec.serviceAccountName, rack.placement, rack.resources,
+	// rack.customLabels. Runs after sidecar/version upgrades so those fields are
+	// already converged before we compare here.
+	update, err := cc.podTemplateUpdateNeeded(ctx, cluster)
+	if err != nil {
+		return nil, errors.Wrap(err, "check if pod template update is needed")
+	}
+	if update {
+		logger.Info(ctx, "Next Action: Reconcile rack pod template")
+		return actions.NewPodTemplateUpdate(cluster, cc.OperatorImage, logger), nil
+	}
+
 	///////////////////////////////////////////////////////////////////////////////////////
 	// At this point, the cluster is in a stable state and ready to start another action //
 	///////////////////////////////////////////////////////////////////////////////////////
@@ -199,4 +214,23 @@ func (cc *ClusterReconciler) sidecarUpdateNeeded(ctx context.Context, rack scyll
 
 	return actualSidecarContainer.Image != desiredSidecarContainer.Image, desiredSidecarContainer, nil
 
+}
+
+func (cc *ClusterReconciler) podTemplateUpdateNeeded(ctx context.Context, cluster *scyllav1.ScyllaCluster) (bool, error) {
+	sub := actions.NewPodTemplateUpdateSubAction(cluster, cc.OperatorImage)
+	for _, rack := range cluster.Spec.Datacenter.Racks {
+		actualSts, err := util.GetStatefulSetForRack(ctx, rack, cluster, cc.KubeClient)
+		if err != nil {
+			return false, errors.Wrap(err, "fetch rack sts")
+		}
+		updated, err := sub.RackUpdated(rack, actualSts)
+		if err != nil {
+			return false, errors.Wrap(err, "check rack pod template")
+		}
+		if !updated {
+			cc.Logger.Debug(ctx, "Pod template update needed", "rack", rack.Name)
+			return true, nil
+		}
+	}
+	return false, nil
 }

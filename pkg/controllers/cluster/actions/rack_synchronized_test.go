@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/scylladb/go-log"
+	scyllav1 "github.com/scylladb/scylla-operator/pkg/api/v1"
 	"github.com/scylladb/scylla-operator/pkg/controllers/cluster/resource"
 	"github.com/scylladb/scylla-operator/pkg/test/unit"
 	"go.uber.org/zap"
@@ -24,11 +25,11 @@ type subAction struct {
 	updateFunc  func(sts *appsv1.StatefulSet) error
 }
 
-func (a *subAction) RackUpdated(sts *appsv1.StatefulSet) (bool, error) {
+func (a *subAction) RackUpdated(_ scyllav1.RackSpec, sts *appsv1.StatefulSet) (bool, error) {
 	return a.updateState[sts.Name], nil
 }
 
-func (a *subAction) Update(sts *appsv1.StatefulSet) error {
+func (a *subAction) Update(_ scyllav1.RackSpec, sts *appsv1.StatefulSet) error {
 	a.updates = append(a.updates, sts.Name)
 	if a.updateFunc != nil {
 		return a.updateFunc(sts)
