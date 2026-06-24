@@ -26,6 +26,7 @@ const (
 //   - Tolerations
 //   - Pod template labels (RackLabels + spec.CustomLabels)
 //   - Per-container Resources, matched by container name
+//   - Per-container VolumeMounts, matched by container name
 //   - Pod Volumes (operator-managed base volumes + spec.Volumes)
 //
 // Image-related fields are intentionally out of scope: SidecarUpgrade and the
@@ -58,8 +59,8 @@ func (a *PodTemplateUpdate) Update(rack scyllav1.RackSpec, sts *appsv1.StatefulS
 
 	sts.Spec.Template.ObjectMeta.Labels = desired.Spec.Template.ObjectMeta.Labels
 
-	if err := applyContainerResources(actualSpec.Containers, wantSpec.Containers); err != nil {
-		return errors.Wrap(err, "apply container resources")
+	if err := applyContainerSpec(actualSpec.Containers, wantSpec.Containers); err != nil {
+		return errors.Wrap(err, "apply container spec")
 	}
 
 	// Replace the full Volumes list with the desired one. The apiserver does not
@@ -125,7 +126,7 @@ func managedPodTemplateDiverged(actual, desired *appsv1.StatefulSet) bool {
 	if !apiequality.Semantic.DeepEqual(actual.Spec.Template.ObjectMeta.Labels, desired.Spec.Template.ObjectMeta.Labels) {
 		return true
 	}
-	if containerResourcesDiverge(actualSpec.Containers, wantSpec.Containers) {
+	if containerSpecDiverge(actualSpec.Containers, wantSpec.Containers) {
 		return true
 	}
 	if volumesDiverge(actualSpec.Volumes, wantSpec.Volumes) {
@@ -140,21 +141,25 @@ func managedPodTemplateDiverged(actual, desired *appsv1.StatefulSet) bool {
 	return false
 }
 
-// containerResourcesDiverge reports whether any container present in both
-// actual and want (matched by name) has different Resources. Containers that
-// exist only on one side are ignored: container set management belongs to
-// StatefulSetForRack / dedicated actions, not this one.
-func containerResourcesDiverge(actual, want []corev1.Container) bool {
-	byName := make(map[string]corev1.ResourceRequirements, len(want))
-	for _, c := range want {
-		byName[c.Name] = c.Resources
+// containerSpecDiverge reports whether any container present in both actual and
+// want (matched by name) has different Resources or VolumeMounts. Containers
+// that exist only on one side are ignored: container set management belongs to
+// StatefulSetForRack / dedicated actions, not this one. VolumeMounts are not
+// server-defaulted by the apiserver, so a direct comparison is loop-safe.
+func containerSpecDiverge(actual, want []corev1.Container) bool {
+	byName := make(map[string]*corev1.Container, len(want))
+	for i := range want {
+		byName[want[i].Name] = &want[i]
 	}
-	for _, c := range actual {
-		wantRes, ok := byName[c.Name]
+	for i := range actual {
+		w, ok := byName[actual[i].Name]
 		if !ok {
 			continue
 		}
-		if !apiequality.Semantic.DeepEqual(c.Resources, wantRes) {
+		if !apiequality.Semantic.DeepEqual(actual[i].Resources, w.Resources) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(actual[i].VolumeMounts, w.VolumeMounts) {
 			return true
 		}
 	}
@@ -209,18 +214,35 @@ func normalizeVolumes(in []corev1.Volume) []corev1.Volume {
 	return out
 }
 
-// applyContainerResources copies Resources from want into matching containers
-// in actual (matched by name). Containers in actual that have no counterpart
-// in want are left untouched.
-func applyContainerResources(actual, want []corev1.Container) error {
-	byName := make(map[string]corev1.ResourceRequirements, len(want))
-	for _, c := range want {
-		byName[c.Name] = c.Resources
+// applyContainerSpec copies Resources and VolumeMounts from want into matching
+// containers in actual (matched by name). Containers in actual that have no
+// counterpart in want are left untouched. The apiserver does not inject
+// VolumeMounts into the STS pod template (the ServiceAccount token mount is
+// added to Pods, not the template), so replacing the whole list is safe and
+// supports removing mounts the user dropped from the spec.
+func applyContainerSpec(actual, want []corev1.Container) error {
+	byName := make(map[string]*corev1.Container, len(want))
+	for i := range want {
+		byName[want[i].Name] = &want[i]
 	}
 	for i := range actual {
-		if r, ok := byName[actual[i].Name]; ok {
-			actual[i].Resources = r
+		w, ok := byName[actual[i].Name]
+		if !ok {
+			continue
 		}
+		actual[i].Resources = w.Resources
+		actual[i].VolumeMounts = deepCopyVolumeMounts(w.VolumeMounts)
 	}
 	return nil
+}
+
+// deepCopyVolumeMounts returns an independent copy of the volume mounts slice so
+// mutating the STS does not alias the freshly-built desired template.
+func deepCopyVolumeMounts(in []corev1.VolumeMount) []corev1.VolumeMount {
+	if in == nil {
+		return nil
+	}
+	out := make([]corev1.VolumeMount, len(in))
+	copy(out, in)
+	return out
 }

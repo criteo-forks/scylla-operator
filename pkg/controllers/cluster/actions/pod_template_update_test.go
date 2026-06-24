@@ -158,6 +158,29 @@ func TestPodTemplateUpdate_Volumes(t *testing.T) {
 	}
 }
 
+func TestPodTemplateUpdate_VolumeMounts(t *testing.T) {
+	cluster := unit.NewMultiRackCluster(1)
+	rack := &cluster.Spec.Datacenter.Racks[0]
+	rack.Volumes = []corev1.Volume{{
+		Name:         "extra-data",
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}}
+	rack.VolumeMounts = []corev1.VolumeMount{{
+		Name:      "extra-data",
+		MountPath: "/var/lib/extra",
+	}}
+
+	staleCluster := unit.NewMultiRackCluster(1)
+	staleSts := clusterresource.StatefulSetForRack(staleCluster.Spec.Datacenter.Racks[0], staleCluster, "image")
+
+	got := executeAndGet(t, cluster, staleSts)
+
+	scylla := findContainer(t, got.Spec.Template.Spec.Containers, "scylla")
+	if findVolumeMount(t, scylla.VolumeMounts, "extra-data").MountPath != "/var/lib/extra" {
+		t.Fatalf("extra-data volume mount not propagated to scylla container: %+v", scylla.VolumeMounts)
+	}
+}
+
 func TestPodTemplateUpdate_VolumesNoopWithDefaultedMode(t *testing.T) {
 	// Simulate the apiserver having defaulted ConfigMap/Secret defaultMode on the
 	// stored STS. The action must NOT see this as a divergence, otherwise it would
@@ -242,4 +265,15 @@ func findVolume(t *testing.T, vs []corev1.Volume, name string) corev1.Volume {
 	}
 	t.Fatalf("volume %q not found among %d volumes", name, len(vs))
 	return corev1.Volume{}
+}
+
+func findVolumeMount(t *testing.T, ms []corev1.VolumeMount, name string) corev1.VolumeMount {
+	t.Helper()
+	for _, m := range ms {
+		if m.Name == name {
+			return m
+		}
+	}
+	t.Fatalf("volume mount %q not found among %d mounts", name, len(ms))
+	return corev1.VolumeMount{}
 }
