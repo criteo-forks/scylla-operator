@@ -43,10 +43,10 @@ func (cc *ClusterReconciler) sync(c *scyllav1.ScyllaCluster) error {
 	}
 	logger.Debug(ctx, "All StatefulSets are up-to-date!")
 
-	// Cleanup Cluster resources
+	/*// Cleanup Cluster resources
 	if err := cc.cleanup(ctx, c); err != nil {
 		cc.Recorder.Event(c, corev1.EventTypeWarning, naming.ErrSyncFailed, MessageCleanupFailed)
-	}
+	}*/
 
 	// Sync Headless Service for Cluster
 	if err := cc.syncClusterHeadlessService(ctx, c); err != nil {
@@ -66,6 +66,12 @@ func (cc *ClusterReconciler) sync(c *scyllav1.ScyllaCluster) error {
 	if err := cc.syncMemberServices(ctx, c); err != nil {
 		cc.Recorder.Event(c, corev1.EventTypeWarning, naming.ErrSyncFailed, MessageMemberServicesSyncFailed)
 		return errors.Wrap(err, "failed to sync member service")
+	}
+
+	// Criteo: moved from before "Sync Headless Service for Cluster" to here
+	// Cleanup Cluster resources
+	if err := cc.cleanup(ctx, c); err != nil {
+		cc.Recorder.Event(c, corev1.EventTypeWarning, naming.ErrSyncFailed, MessageCleanupFailed)
 	}
 
 	// Update Status
