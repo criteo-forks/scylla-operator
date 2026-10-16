@@ -63,6 +63,78 @@ func TestPodTemplateUpdate_ServiceAccountAndLegacyAlias(t *testing.T) {
 	}
 }
 
+func TestPodTemplateUpdate_Network(t *testing.T) {
+	tests := []struct {
+		name     string
+		oldHost  bool
+		oldDNS   corev1.DNSPolicy
+		wantHost bool
+		wantDNS  corev1.DNSPolicy
+	}{
+		{
+			name:     "disable host networking",
+			oldHost:  true,
+			oldDNS:   corev1.DNSClusterFirstWithHostNet,
+			wantHost: false,
+			wantDNS:  corev1.DNSClusterFirst,
+		},
+		{
+			name:     "enable host networking",
+			oldHost:  false,
+			oldDNS:   corev1.DNSClusterFirst,
+			wantHost: true,
+			wantDNS:  corev1.DNSClusterFirstWithHostNet,
+		},
+		{
+			name:     "change DNS policy only",
+			oldHost:  false,
+			oldDNS:   corev1.DNSDefault,
+			wantHost: false,
+			wantDNS:  corev1.DNSClusterFirst,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cluster := unit.NewMultiRackCluster(1)
+			cluster.Spec.Network.HostNetworking = tt.wantHost
+			cluster.Spec.Network.DNSPolicy = tt.wantDNS
+			staleCluster := cluster.DeepCopy()
+			staleCluster.Spec.Network.HostNetworking = tt.oldHost
+			staleCluster.Spec.Network.DNSPolicy = tt.oldDNS
+			rack := cluster.Spec.Datacenter.Racks[0]
+			staleSts := clusterresource.StatefulSetForRack(rack, staleCluster, "image")
+			sub := NewPodTemplateUpdateSubAction(cluster, "image")
+
+			updated, err := sub.RackUpdated(rack, staleSts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if updated {
+				t.Fatal("RackUpdated reported the stale network settings as current")
+			}
+
+			got := executeAndGet(t, cluster, staleSts)
+			if got.Spec.Template.Spec.HostNetwork != tt.wantHost {
+				t.Errorf("HostNetwork=%t, want %t", got.Spec.Template.Spec.HostNetwork, tt.wantHost)
+			}
+			if got.Spec.Template.Spec.DNSPolicy != tt.wantDNS {
+				t.Errorf("DNSPolicy=%q, want %q", got.Spec.Template.Spec.DNSPolicy, tt.wantDNS)
+			}
+			if got.Spec.UpdateStrategy.Type != appsv1.RollingUpdateStatefulSetStrategyType {
+				t.Errorf("UpdateStrategy=%q, want RollingUpdate", got.Spec.UpdateStrategy.Type)
+			}
+			updated, err = sub.RackUpdated(rack, got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !updated {
+				t.Fatal("RackUpdated still reports network divergence after the update")
+			}
+		})
+	}
+}
+
 func TestPodTemplateUpdate_TolerationsAffinityLabels(t *testing.T) {
 	cluster := unit.NewMultiRackCluster(1)
 	rack := &cluster.Spec.Datacenter.Racks[0]

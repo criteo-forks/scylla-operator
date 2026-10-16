@@ -49,6 +49,8 @@ func (a *PodTemplateUpdate) Update(rack scyllav1.RackSpec, sts *appsv1.StatefulS
 	actualSpec := &sts.Spec.Template.Spec
 
 	actualSpec.ServiceAccountName = wantSpec.ServiceAccountName
+	actualSpec.HostNetwork = wantSpec.HostNetwork
+	actualSpec.DNSPolicy = wantSpec.DNSPolicy
 	// Keep DeprecatedServiceAccount (JSON: "serviceAccount") in sync. The apiserver
 	// rejects updates when both fields are set to different values, and read-back of
 	// an existing pod template typically populates this legacy alias via defaulting.
@@ -109,6 +111,12 @@ func managedPodTemplateDiverged(actual, desired *appsv1.StatefulSet) bool {
 	wantSpec := desired.Spec.Template.Spec
 
 	if actualSpec.ServiceAccountName != wantSpec.ServiceAccountName {
+		return true
+	}
+	if actualSpec.HostNetwork != wantSpec.HostNetwork {
+		return true
+	}
+	if actualSpec.DNSPolicy != wantSpec.DNSPolicy {
 		return true
 	}
 	// The apiserver populates DeprecatedServiceAccount on read via defaulting,
