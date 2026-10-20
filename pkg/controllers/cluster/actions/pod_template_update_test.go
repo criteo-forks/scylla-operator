@@ -253,6 +253,38 @@ func TestPodTemplateUpdate_VolumeMounts(t *testing.T) {
 	}
 }
 
+func TestPodTemplateUpdate_Lifecycle(t *testing.T) {
+	cluster := unit.NewMultiRackCluster(1)
+	rack := cluster.Spec.Datacenter.Racks[0]
+
+	staleSts := clusterresource.StatefulSetForRack(rack, cluster, "image")
+	for i := range staleSts.Spec.Template.Spec.Containers {
+		c := &staleSts.Spec.Template.Spec.Containers[i]
+		if c.Name == "scylla" {
+			c.Lifecycle = &corev1.Lifecycle{PreStop: &corev1.Handler{
+				Exec: &corev1.ExecAction{Command: []string{"/bin/sh", "-c", "old"}},
+			}}
+		}
+	}
+
+	updated, err := NewPodTemplateUpdateSubAction(cluster, "image").RackUpdated(rack, staleSts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated {
+		t.Fatal("expected stale preStop to be reported as divergence")
+	}
+
+	got := executeAndGet(t, cluster, staleSts)
+
+	want := clusterresource.StatefulSetForRack(rack, cluster, "image")
+	wantScylla := findContainer(t, want.Spec.Template.Spec.Containers, "scylla")
+	gotScylla := findContainer(t, got.Spec.Template.Spec.Containers, "scylla")
+	if !apiequality.Semantic.DeepEqual(gotScylla.Lifecycle, wantScylla.Lifecycle) {
+		t.Fatalf("lifecycle not propagated: got %+v, want %+v", gotScylla.Lifecycle, wantScylla.Lifecycle)
+	}
+}
+
 func TestPodTemplateUpdate_VolumesNoopWithDefaultedMode(t *testing.T) {
 	// Simulate the apiserver having defaulted ConfigMap/Secret defaultMode on the
 	// stored STS. The action must NOT see this as a divergence, otherwise it would

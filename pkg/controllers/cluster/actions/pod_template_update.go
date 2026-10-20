@@ -27,6 +27,7 @@ const (
 //   - Pod template labels (RackLabels + spec.CustomLabels)
 //   - Per-container Resources, matched by container name
 //   - Per-container VolumeMounts, matched by container name
+//   - Per-container Lifecycle (e.g. preStop hook), matched by container name
 //   - Pod Volumes (operator-managed base volumes + spec.Volumes)
 //
 // Image-related fields are intentionally out of scope: SidecarUpgrade and the
@@ -150,7 +151,7 @@ func managedPodTemplateDiverged(actual, desired *appsv1.StatefulSet) bool {
 }
 
 // containerSpecDiverge reports whether any container present in both actual and
-// want (matched by name) has different Resources or VolumeMounts. Containers
+// want (matched by name) has different Resources, VolumeMounts or Lifecycle. Containers
 // that exist only on one side are ignored: container set management belongs to
 // StatefulSetForRack / dedicated actions, not this one. VolumeMounts are not
 // server-defaulted by the apiserver, so a direct comparison is loop-safe.
@@ -168,6 +169,9 @@ func containerSpecDiverge(actual, want []corev1.Container) bool {
 			return true
 		}
 		if !apiequality.Semantic.DeepEqual(actual[i].VolumeMounts, w.VolumeMounts) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(actual[i].Lifecycle, w.Lifecycle) {
 			return true
 		}
 	}
@@ -240,6 +244,7 @@ func applyContainerSpec(actual, want []corev1.Container) error {
 		}
 		actual[i].Resources = w.Resources
 		actual[i].VolumeMounts = deepCopyVolumeMounts(w.VolumeMounts)
+		actual[i].Lifecycle = w.Lifecycle.DeepCopy()
 	}
 	return nil
 }
