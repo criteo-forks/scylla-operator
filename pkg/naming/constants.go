@@ -38,8 +38,9 @@ const (
 const (
 	ClusterNameLabel    = "scylla/cluster"
 	DatacenterNameLabel = "scylla/datacenter"
-	RackNameLabel       = "scylla/rack"
+	RackNameLabel       = "scylla/rack" // rack name as it appears in ScyllaCluster
 	MultiDcSeedLabel    = "scylla/multi-dc-seed"
+	SnitchRackLabel     = "scylla/snitch-rack" // rack name advertised in cassandra-rackdc.properties
 
 	AppName         = "scylla"
 	OperatorAppName = "scylla-operator"

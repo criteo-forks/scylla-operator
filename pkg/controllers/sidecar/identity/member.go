@@ -56,7 +56,13 @@ func Retrieve(ctx context.Context, name, namespace string, kubeclient kubernetes
 	}
 
 	rack := pod.Labels[naming.RackNameLabel]
-	if options.GetSidecarOptions().RackFromNode {
+	if snitchRack, ok := pod.Labels[naming.SnitchRackLabel]; ok {
+		// The snitch-rack label wins whatever RACK_FROM_NODE says, and the node is not read.
+		if snitchRack == "" {
+			return nil, errors.Errorf("pod label %s is set but empty", naming.SnitchRackLabel)
+		}
+		rack = snitchRack
+	} else if options.GetSidecarOptions().RackFromNode {
 		node, err := kubeclient.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get node")
@@ -64,7 +70,7 @@ func Retrieve(ctx context.Context, name, namespace string, kubeclient kubernetes
 		var ok bool
 		rack, ok = node.Labels[naming.RackNameLabel]
 		if !ok {
-			return nil, errors.Wrap(err, fmt.Sprintf("failed to get rack name from label %s", naming.RackNameLabel))
+			return nil, errors.Errorf("failed to get rack name from label %s", naming.RackNameLabel)
 		}
 	}
 
